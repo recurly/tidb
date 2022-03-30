@@ -927,11 +927,10 @@ func buildSelectField(tctx *tcontext.Context, db *BaseConn, dbName, tableName st
 			continue
 		}
 		escapedField := wrapBackTicks(escapeString(fieldName))
-		switch fieldType {
-		case "date", "datetime", "timestamp":
+		if fieldType == "date" || strings.HasPrefix(fieldType, "datetime") || strings.HasPrefix(fieldType, "timestamp") {
 			hasDateColumn = true
 			availableFields = append(availableFields, fmt.Sprintf("if(%s = 0, null, %s)", escapedField, escapedField))
-		default:
+		} else {
 			availableFields = append(availableFields, escapedField)
 		}
 	}
