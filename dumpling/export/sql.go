@@ -912,22 +912,30 @@ func createConnWithConsistency(ctx context.Context, db *sql.DB, repeatableRead b
 // and the number of writable fields.
 func buildSelectField(tctx *tcontext.Context, db *BaseConn, dbName, tableName string, completeInsert bool) (string, int, error) { // revive:disable-line:flag-parameter
 	query := fmt.Sprintf("SHOW COLUMNS FROM `%s`.`%s`", escapeString(dbName), escapeString(tableName))
-	results, err := db.QuerySQLWithColumns(tctx, []string{"FIELD", "EXTRA"}, query)
+	results, err := db.QuerySQLWithColumns(tctx, []string{"FIELD", "TYPE", "EXTRA"}, query)
 	if err != nil {
 		return "", 0, err
 	}
 	availableFields := make([]string, 0)
 	hasGenerateColumn := false
+	hasDateColumn := false
 	for _, oneRow := range results {
-		fieldName, extra := oneRow[0], oneRow[1]
+		fieldName, fieldType, extra := oneRow[0], oneRow[1], oneRow[2]
 		switch extra {
 		case "STORED GENERATED", "VIRTUAL GENERATED":
 			hasGenerateColumn = true
 			continue
 		}
-		availableFields = append(availableFields, wrapBackTicks(escapeString(fieldName)))
+		escapedField := wrapBackTicks(escapeString(fieldName))
+		switch fieldType {
+		case "date", "datetime", "timestamp":
+			hasDateColumn = true
+			availableFields = append(availableFields, fmt.Sprintf("if(%s = 0, null, %s)", escapedField, escapedField))
+		default:
+			availableFields = append(availableFields, escapedField)
+		}
 	}
-	if completeInsert || hasGenerateColumn {
+	if completeInsert || hasGenerateColumn || hasDateColumn {
 		return strings.Join(availableFields, ","), len(availableFields), nil
 	}
 	return "*", len(availableFields), nil
