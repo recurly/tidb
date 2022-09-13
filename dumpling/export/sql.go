@@ -919,6 +919,7 @@ func buildSelectField(tctx *tcontext.Context, db *BaseConn, dbName, tableName st
 	availableFields := make([]string, 0)
 	hasGenerateColumn := false
 	hasDateColumn := false
+	hasStringColumn := false
 	for _, oneRow := range results {
 		fieldName, fieldType, extra := oneRow[0], oneRow[1], oneRow[2]
 		switch extra {
@@ -927,14 +928,24 @@ func buildSelectField(tctx *tcontext.Context, db *BaseConn, dbName, tableName st
 			continue
 		}
 		escapedField := wrapBackTicks(escapeString(fieldName))
-		if fieldType == "date" || strings.HasPrefix(fieldType, "datetime") || strings.HasPrefix(fieldType, "timestamp") {
+		if fieldType == "date" ||
+			strings.HasPrefix(fieldType, "datetime") ||
+			strings.HasPrefix(fieldType, "timestamp") {
 			hasDateColumn = true
 			availableFields = append(availableFields, fmt.Sprintf("if(%s = 0, null, %s)", escapedField, escapedField))
+		} else if strings.HasPrefix(fieldType, "char") ||
+			strings.HasPrefix(fieldType, "varchar") ||
+			fieldType == "tinytext" ||
+			fieldType == "text" ||
+			fieldType == "mediumtext" ||
+			fieldType == "longtext" {
+			hasStringColumn = true
+			availableFields = append(availableFields, fmt.Sprintf("replace(%s, '\\0', '')", escapedField))
 		} else {
 			availableFields = append(availableFields, escapedField)
 		}
 	}
-	if completeInsert || hasGenerateColumn || hasDateColumn {
+	if completeInsert || hasGenerateColumn || hasDateColumn || hasStringColumn {
 		return strings.Join(availableFields, ","), len(availableFields), nil
 	}
 	return "*", len(availableFields), nil
