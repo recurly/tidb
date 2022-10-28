@@ -95,7 +95,7 @@ func recordGlobalMetaData(tctx *tcontext.Context, db *sql.Conn, buffer *bytes.Bu
 	// | tidb-binlog | 415195906970746880 |              |                  |                   |
 	// +-------------+--------------------+--------------+------------------+-------------------+
 	// 1 row in set (0.00 sec)
-	case version.ServerTypeMySQL, version.ServerTypeTiDB:
+	case version.ServerTypeMySQL, version.ServerTypeTiDB, version.ServerTypeVitess:
 		str, err := ShowMasterStatus(db)
 		if err != nil {
 			return err

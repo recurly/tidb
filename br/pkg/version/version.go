@@ -282,6 +282,8 @@ const (
 	ServerTypeMariaDB
 	// ServerTypeTiDB represents TiDB server type
 	ServerTypeTiDB
+	// ServerTypeVitess represents Vitess server type
+	ServerTypeVitess
 
 	// ServerTypeAll represents All server types
 	ServerTypeAll
@@ -292,6 +294,7 @@ var serverTypeString = []string{
 	ServerTypeMySQL:   "MySQL",
 	ServerTypeMariaDB: "MariaDB",
 	ServerTypeTiDB:    "TiDB",
+	ServerTypeVitess:  "Vitess",
 }
 
 // String implements Stringer.String

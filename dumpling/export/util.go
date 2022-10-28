@@ -77,5 +77,8 @@ func string2Map(a, b []string) map[string]string {
 }
 
 func needRepeatableRead(serverType version.ServerType, consistency string) bool {
+	if serverType == version.ServerTypeVitess {
+		return false
+	}
 	return consistency != consistencyTypeSnapshot || serverType != version.ServerTypeTiDB
 }

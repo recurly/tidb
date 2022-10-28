@@ -1304,6 +1304,22 @@ func detectServerInfo(d *Dumper) error {
 		return err
 	}
 	conf.ServerInfo = version.ParseServerInfo(versionStr)
+
+	// Is this actually Vitess?
+	if conf.ServerInfo.ServerType == version.ServerTypeMySQL {
+		var varName string
+		var varValue string
+		const query = "SHOW VARIABLES LIKE 'version';"
+		row := db.QueryRowContext(d.tctx.Context, query)
+		err = row.Scan(&varName, &varValue)
+		if err != nil {
+			return errors.Annotatef(err, "sql: %s", query)
+		}
+		if strings.Contains(varValue, "vitess") {
+			conf.ServerInfo.ServerType = version.ServerTypeVitess
+		}
+	}
+
 	return nil
 }
 
@@ -1318,6 +1334,8 @@ func resolveAutoConsistency(d *Dumper) error {
 		conf.Consistency = consistencyTypeSnapshot
 	case version.ServerTypeMySQL, version.ServerTypeMariaDB:
 		conf.Consistency = consistencyTypeFlush
+	case version.ServerTypeVitess:
+		conf.Consistency = consistencyTypeNone
 	default:
 		conf.Consistency = consistencyTypeNone
 	}
