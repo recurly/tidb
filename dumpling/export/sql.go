@@ -917,6 +917,7 @@ func buildSelectField(tctx *tcontext.Context, db *BaseConn, dbName, tableName st
 		return "", 0, err
 	}
 	availableFields := make([]string, 0)
+	hasChecksumColumn := false
 	hasGenerateColumn := false
 	hasDateColumn := false
 	hasStringColumn := false
@@ -945,7 +946,15 @@ func buildSelectField(tctx *tcontext.Context, db *BaseConn, dbName, tableName st
 			availableFields = append(availableFields, escapedField)
 		}
 	}
-	if completeInsert || hasGenerateColumn || hasDateColumn || hasStringColumn {
+	checksumFields := make([]string, 0)
+	for _, fieldSql := range availableFields {
+		checksumFields = append(checksumFields, fmt.Sprintf("ifnull(%s, '')", fieldSql))
+	}
+	if len(checksumFields) > 0 {
+		hasChecksumColumn = true
+		availableFields = append(availableFields, fmt.Sprintf("sha1(concat(%s))", strings.Join(checksumFields, ",")))
+	}
+	if completeInsert || hasChecksumColumn || hasGenerateColumn || hasDateColumn || hasStringColumn {
 		return strings.Join(availableFields, ","), len(availableFields), nil
 	}
 	return "*", len(availableFields), nil
