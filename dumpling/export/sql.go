@@ -916,6 +916,7 @@ func buildSelectField(tctx *tcontext.Context, db *BaseConn, dbName, tableName st
 	if err != nil {
 		return "", 0, err
 	}
+	checksumFields := make([]string, 0)
 	availableFields := make([]string, 0)
 	hasChecksumColumn := false
 	hasGenerateColumn := false
@@ -929,11 +930,14 @@ func buildSelectField(tctx *tcontext.Context, db *BaseConn, dbName, tableName st
 			continue
 		}
 		escapedField := wrapBackTicks(escapeString(fieldName))
+		fieldSql := escapedField
+		checksumSql := fmt.Sprintf("ifnull(%s, '')", fieldSql)
 		if fieldType == "date" ||
 			strings.HasPrefix(fieldType, "datetime") ||
 			strings.HasPrefix(fieldType, "timestamp") {
 			hasDateColumn = true
-			availableFields = append(availableFields, fmt.Sprintf("if(%s = 0, null, %s)", escapedField, escapedField))
+			fieldSql = fmt.Sprintf("if(%s = 0, null, %s)", escapedField, escapedField)
+			checksumSql = fmt.Sprintf("ifnull(%s, '')", fieldSql)
 		} else if strings.HasPrefix(fieldType, "char") ||
 			strings.HasPrefix(fieldType, "varchar") ||
 			fieldType == "tinytext" ||
@@ -941,14 +945,12 @@ func buildSelectField(tctx *tcontext.Context, db *BaseConn, dbName, tableName st
 			fieldType == "mediumtext" ||
 			fieldType == "longtext" {
 			hasStringColumn = true
-			availableFields = append(availableFields, fmt.Sprintf("replace(%s, '\\0', '')", escapedField))
-		} else {
-			availableFields = append(availableFields, escapedField)
+			fieldSql = fmt.Sprintf("replace(%s, '\\0', '')", escapedField)
+			// reduce string length so not to overflow CONCAT(), sha1() returns 40 characters
+			checksumSql = fmt.Sprintf("ifnull(if(length(%s) > 40, sha1(%s), %s), '')", escapedField, fieldSql, fieldSql)
 		}
-	}
-	checksumFields := make([]string, 0)
-	for _, fieldSql := range availableFields {
-		checksumFields = append(checksumFields, fmt.Sprintf("ifnull(%s, '')", fieldSql))
+		availableFields = append(availableFields, fieldSql)
+		checksumFields = append(checksumFields, checksumSql)
 	}
 	if len(checksumFields) > 0 {
 		hasChecksumColumn = true
