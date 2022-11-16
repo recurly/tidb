@@ -921,6 +921,7 @@ func buildSelectField(tctx *tcontext.Context, db *BaseConn, dbName, tableName st
 	hasChecksumColumn := false
 	hasGenerateColumn := false
 	hasDateColumn := false
+	hasDecimalColumn := false
 	hasStringColumn := false
 	for _, oneRow := range results {
 		fieldName, fieldType, extra := oneRow[0], oneRow[1], oneRow[2]
@@ -936,7 +937,11 @@ func buildSelectField(tctx *tcontext.Context, db *BaseConn, dbName, tableName st
 			strings.HasPrefix(fieldType, "datetime") ||
 			strings.HasPrefix(fieldType, "timestamp") {
 			hasDateColumn = true
-			fieldSql = fmt.Sprintf("if(%s = 0, null, %s)", escapedField, escapedField)
+			if strings.HasPrefix(fieldType, "datetime") || strings.HasPrefix(fieldType, "timestamp") {
+				fieldSql = fmt.Sprintf("if(%s = 0, null, date_format(%s, '%%Y-%%m-%%d %%H:%%i:%%S.%%f'))", escapedField, escapedField)
+			} else {
+				fieldSql = fmt.Sprintf("if(%s = 0, null, %s)", escapedField, escapedField)
+			}
 			checksumSql = fmt.Sprintf("ifnull(%s, '')", fieldSql)
 		} else if strings.HasPrefix(fieldType, "char") ||
 			strings.HasPrefix(fieldType, "varchar") ||
@@ -948,6 +953,10 @@ func buildSelectField(tctx *tcontext.Context, db *BaseConn, dbName, tableName st
 			fieldSql = fmt.Sprintf("replace(%s, '\\0', '')", escapedField)
 			// reduce string length so not to overflow CONCAT(), sha1() returns 40 characters
 			checksumSql = fmt.Sprintf("ifnull(if(length(%s) > 40, sha1(%s), %s), '')", escapedField, fieldSql, fieldSql)
+		} else if strings.HasPrefix(fieldType, "decimal") ||
+			strings.HasPrefix(fieldType, "numeric") {
+			hasDecimalColumn = true
+			checksumSql = fmt.Sprintf("ifnull(trim(trailing '.' from trim(trailing '0' from %s)), '')", escapedField)
 		}
 		availableFields = append(availableFields, fieldSql)
 		checksumFields = append(checksumFields, checksumSql)
@@ -956,7 +965,7 @@ func buildSelectField(tctx *tcontext.Context, db *BaseConn, dbName, tableName st
 		hasChecksumColumn = true
 		availableFields = append(availableFields, fmt.Sprintf("sha1(concat(%s))", strings.Join(checksumFields, ",")))
 	}
-	if completeInsert || hasChecksumColumn || hasGenerateColumn || hasDateColumn || hasStringColumn {
+	if completeInsert || hasChecksumColumn || hasDateColumn || hasDecimalColumn || hasGenerateColumn || hasStringColumn {
 		return strings.Join(availableFields, ","), len(availableFields), nil
 	}
 	return "*", len(availableFields), nil
