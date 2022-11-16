@@ -951,8 +951,8 @@ func buildSelectField(tctx *tcontext.Context, db *BaseConn, dbName, tableName st
 			fieldType == "longtext" {
 			hasStringColumn = true
 			fieldSql = fmt.Sprintf("replace(%s, '\\0', '')", escapedField)
-			// reduce string length so not to overflow CONCAT(), sha1() returns 40 characters
-			checksumSql = fmt.Sprintf("ifnull(if(length(%s) > 40, sha1(%s), %s), '')", escapedField, fieldSql, fieldSql)
+			// reduce string length so not to overflow CONCAT(), md5() returns 32 characters
+			checksumSql = fmt.Sprintf("ifnull(if(length(%s) > 32, md5(%s), %s), '')", escapedField, fieldSql, fieldSql)
 		} else if strings.HasPrefix(fieldType, "decimal") ||
 			strings.HasPrefix(fieldType, "numeric") {
 			hasDecimalColumn = true
@@ -963,7 +963,7 @@ func buildSelectField(tctx *tcontext.Context, db *BaseConn, dbName, tableName st
 	}
 	if len(checksumFields) > 0 {
 		hasChecksumColumn = true
-		availableFields = append(availableFields, fmt.Sprintf("sha1(concat(%s))", strings.Join(checksumFields, ",")))
+		availableFields = append(availableFields, fmt.Sprintf("md5(concat(%s))", strings.Join(checksumFields, ",")))
 	}
 	if completeInsert || hasChecksumColumn || hasDateColumn || hasDecimalColumn || hasGenerateColumn || hasStringColumn {
 		return strings.Join(availableFields, ","), len(availableFields), nil
