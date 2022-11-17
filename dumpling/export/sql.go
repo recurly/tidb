@@ -943,8 +943,11 @@ func buildSelectField(tctx *tcontext.Context, db *BaseConn, dbName, tableName st
 				fieldSql = fmt.Sprintf("if(%s = 0, null, %s)", escapedField, escapedField)
 			}
 			checksumSql = fmt.Sprintf("ifnull(%s, '')", fieldSql)
-		} else if strings.HasPrefix(fieldType, "char") ||
+		} else if strings.HasPrefix(fieldType, "binary") ||
+			strings.HasPrefix(fieldType, "varbinary") ||
+			strings.HasPrefix(fieldType, "char") ||
 			strings.HasPrefix(fieldType, "varchar") ||
+			fieldType == "json" ||
 			fieldType == "tinytext" ||
 			fieldType == "text" ||
 			fieldType == "mediumtext" ||
