@@ -919,9 +919,10 @@ func buildSelectField(tctx *tcontext.Context, db *BaseConn, dbName, tableName st
 	checksumFields := make([]string, 0)
 	availableFields := make([]string, 0)
 	hasChecksumColumn := false
-	hasGenerateColumn := false
 	hasDateColumn := false
 	hasDecimalColumn := false
+	hasFloatColumn := false
+	hasGenerateColumn := false
 	hasStringColumn := false
 	for _, oneRow := range results {
 		fieldName, fieldType, extra := oneRow[0], oneRow[1], oneRow[2]
@@ -956,6 +957,11 @@ func buildSelectField(tctx *tcontext.Context, db *BaseConn, dbName, tableName st
 			fieldSql = fmt.Sprintf("replace(replace(%s, '\\0', ''), '\\r', '{__CARRIAGE_RETURN__}')", escapedField)
 			// reduce string length so not to overflow CONCAT(), md5() returns 32 characters
 			checksumSql = fmt.Sprintf("ifnull(if(char_length(replace(%s, '\\0', '')) > 32, md5(replace(%s, '\\0', '')), replace(%s, '\\0', '')), '')", escapedField, escapedField, escapedField)
+		} else if strings.HasPrefix(fieldType, "double") ||
+			strings.HasPrefix(fieldType, "float") ||
+			strings.HasPrefix(fieldType, "real") {
+			hasFloatColumn = true
+			checksumSql = fmt.Sprintf("ifnull(trim(trailing '.' from trim(trailing '0' from truncate(%s, 6))), '')", escapedField)
 		} else if strings.HasPrefix(fieldType, "decimal") ||
 			strings.HasPrefix(fieldType, "numeric") {
 			hasDecimalColumn = true
@@ -968,7 +974,8 @@ func buildSelectField(tctx *tcontext.Context, db *BaseConn, dbName, tableName st
 		hasChecksumColumn = true
 		availableFields = append(availableFields, fmt.Sprintf("md5(concat(%s))", strings.Join(checksumFields, ",")))
 	}
-	if completeInsert || hasChecksumColumn || hasDateColumn || hasDecimalColumn || hasGenerateColumn || hasStringColumn {
+	if completeInsert || hasChecksumColumn || hasDateColumn || hasDecimalColumn || hasFloatColumn || hasGenerateColumn || hasStringColumn {
+		fmt.Println(strings.Join(availableFields, ","))
 		return strings.Join(availableFields, ","), len(availableFields), nil
 	}
 	return "*", len(availableFields), nil
