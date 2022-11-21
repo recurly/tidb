@@ -949,6 +949,7 @@ func buildSelectField(tctx *tcontext.Context, db *BaseConn, dbName, tableName st
 			strings.HasPrefix(fieldType, "char") ||
 			strings.HasPrefix(fieldType, "varchar") ||
 			strings.HasPrefix(fieldType, "enum") ||
+			strings.HasPrefix(fieldType, "set") ||
 			fieldType == "json" ||
 			fieldType == "tinytext" ||
 			fieldType == "text" ||
