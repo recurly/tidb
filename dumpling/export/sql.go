@@ -948,6 +948,7 @@ func buildSelectField(tctx *tcontext.Context, db *BaseConn, dbName, tableName st
 			strings.HasPrefix(fieldType, "varbinary") ||
 			strings.HasPrefix(fieldType, "char") ||
 			strings.HasPrefix(fieldType, "varchar") ||
+			strings.HasPrefix(fieldType, "enum") ||
 			fieldType == "json" ||
 			fieldType == "tinytext" ||
 			fieldType == "text" ||
@@ -956,12 +957,13 @@ func buildSelectField(tctx *tcontext.Context, db *BaseConn, dbName, tableName st
 			hasStringColumn = true
 			fieldSql = fmt.Sprintf("replace(replace(%s, '\\0', ''), '\\r', '{__CARRIAGE_RETURN__}')", escapedField)
 			// reduce string length so not to overflow CONCAT(), md5() returns 32 characters
-			checksumSql = fmt.Sprintf("ifnull(if(char_length(replace(%s, '\\0', '')) > 32, md5(replace(%s, '\\0', '')), replace(%s, '\\0', '')), '')", escapedField, escapedField, escapedField)
+			transformSql := fmt.Sprintf("convert(replace(%s, '\\0', '') using 'utf8mb4')", escapedField)
+			checksumSql = fmt.Sprintf("ifnull(if(char_length(%s) > 32, md5(%s), %s), '')", transformSql, transformSql, transformSql)
 		} else if strings.HasPrefix(fieldType, "double") ||
 			strings.HasPrefix(fieldType, "float") ||
 			strings.HasPrefix(fieldType, "real") {
 			hasFloatColumn = true
-			checksumSql = fmt.Sprintf("ifnull(trim(trailing '.' from trim(trailing '0' from truncate(%s, 6))), '')", escapedField)
+			checksumSql = fmt.Sprintf("ifnull(trim(trailing '.' from trim(trailing '0' from round(%s, 6))), '')", escapedField)
 		} else if strings.HasPrefix(fieldType, "decimal") ||
 			strings.HasPrefix(fieldType, "numeric") {
 			hasDecimalColumn = true
