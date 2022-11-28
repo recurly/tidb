@@ -956,7 +956,8 @@ func buildSelectField(tctx *tcontext.Context, db *BaseConn, dbName, tableName st
 			fieldType == "mediumtext" ||
 			fieldType == "longtext" {
 			hasStringColumn = true
-			transformSql := fmt.Sprintf("convert(replace(%s, '\\0', '') using 'utf8mb4')", escapedField)
+			// remove NUL and BOM characters
+			transformSql := fmt.Sprintf("trim(leading x'efbbbf' from convert(replace(%s, '\\0', '') using 'utf8mb4'))", escapedField)
 			fieldSql = fmt.Sprintf("replace(%s, '\\r', '{__CARRIAGE_RETURN__}')", transformSql)
 			// reduce string length so not to overflow CONCAT(), md5() returns 32 characters
 			checksumSql = fmt.Sprintf("ifnull(if(char_length(%s) > 32, md5(%s), %s), '')", transformSql, transformSql, transformSql)
