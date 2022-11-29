@@ -956,8 +956,10 @@ func buildSelectField(tctx *tcontext.Context, db *BaseConn, dbName, tableName st
 			fieldType == "mediumtext" ||
 			fieldType == "longtext" {
 			hasStringColumn = true
-			// remove NUL and BOM characters
-			transformSql := fmt.Sprintf("trim(leading x'efbbbf' from convert(replace(%s, '\\0', '') using 'utf8mb4'))", escapedField)
+			// remove NUL characters and convert to utf8mb4
+			transformSql := fmt.Sprintf("convert(replace(%s, '\\0', '') using 'utf8mb4')", escapedField)
+			// Remove leading BOM character and Vitess doesn't support TRIM(LEADING ...), use SUBSTR() instead.
+			transformSql = fmt.Sprintf("if(substr(%s, 1, 1) = x'efbbbf', substr(%s, 2), %s)", transformSql, transformSql, transformSql)
 			fieldSql = fmt.Sprintf("replace(%s, '\\r', '{__CARRIAGE_RETURN__}')", transformSql)
 			// reduce string length so not to overflow CONCAT(), md5() returns 32 characters
 			checksumSql = fmt.Sprintf("ifnull(if(char_length(%s) > 32, md5(%s), %s), '')", transformSql, transformSql, transformSql)
@@ -979,7 +981,7 @@ func buildSelectField(tctx *tcontext.Context, db *BaseConn, dbName, tableName st
 		availableFields = append(availableFields, fmt.Sprintf("md5(concat(%s))", strings.Join(checksumFields, ",")))
 	}
 	if completeInsert || hasChecksumColumn || hasDateColumn || hasDecimalColumn || hasFloatColumn || hasGenerateColumn || hasStringColumn {
-		fmt.Println(strings.Join(availableFields, ","))
+		// fmt.Println(strings.Join(availableFields, ","))
 		return strings.Join(availableFields, ","), len(availableFields), nil
 	}
 	return "*", len(availableFields), nil
