@@ -968,8 +968,9 @@ func buildSelectField(tctx *tcontext.Context, db *BaseConn, dbName, tableName st
 			strings.HasPrefix(fieldType, "real") {
 			hasFloatColumn = true
 			checksumSql = fmt.Sprintf("ifnull(trim(trailing '.' from trim(trailing '0' from round(%s, 6))), '')", escapedField)
-		} else if strings.HasPrefix(fieldType, "decimal") ||
-			strings.HasPrefix(fieldType, "numeric") {
+		} else if ((strings.HasPrefix(fieldType, "decimal") ||
+			strings.HasPrefix(fieldType, "numeric")) &&
+			!strings.HasSuffix(fieldType, ",0)")) {
 			hasDecimalColumn = true
 			checksumSql = fmt.Sprintf("ifnull(trim(trailing '.' from trim(trailing '0' from %s)), '')", escapedField)
 		}
