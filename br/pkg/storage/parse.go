@@ -35,6 +35,12 @@ func ParseRawURL(rawURL string) (*url.URL, error) {
 	return u, nil
 }
 
+// ParseBackendFromURL constructs a structured backend description from the
+// *url.URL.
+func ParseBackendFromURL(u *url.URL, options *BackendOptions) (*backuppb.StorageBackend, error) {
+	return parseBackend(u, "", options)
+}
+
 // ParseBackend constructs a structured backend description from the
 // storage URL.
 func ParseBackend(rawURL string, options *BackendOptions) (*backuppb.StorageBackend, error) {
@@ -44,6 +50,14 @@ func ParseBackend(rawURL string, options *BackendOptions) (*backuppb.StorageBack
 	u, err := ParseRawURL(rawURL)
 	if err != nil {
 		return nil, errors.Trace(err)
+	}
+	return parseBackend(u, rawURL, options)
+}
+
+func parseBackend(u *url.URL, rawURL string, options *BackendOptions) (*backuppb.StorageBackend, error) {
+	if rawURL == "" {
+		// try to handle hdfs for ParseBackendFromURL caller
+		rawURL = u.String()
 	}
 	switch u.Scheme {
 	case "":
@@ -66,18 +80,23 @@ func ParseBackend(rawURL string, options *BackendOptions) (*backuppb.StorageBack
 		noop := &backuppb.Noop{}
 		return &backuppb.StorageBackend{Backend: &backuppb.StorageBackend_Noop{Noop: noop}}, nil
 
-	case "s3":
+	case "s3", "ks3":
 		if u.Host == "" {
 			return nil, errors.Annotatef(berrors.ErrStorageInvalidConfig, "please specify the bucket for s3 in %s", rawURL)
 		}
 		prefix := strings.Trim(u.Path, "/")
 		s3 := &backuppb.S3{Bucket: u.Host, Prefix: prefix}
-		if options == nil {
-			options = &BackendOptions{S3: S3BackendOptions{ForcePathStyle: true}}
+		var s3Options S3BackendOptions = S3BackendOptions{ForcePathStyle: true}
+		if options != nil {
+			s3Options = options.S3
 		}
-		ExtractQueryParameters(u, &options.S3)
-		if err := options.S3.Apply(s3); err != nil {
+		ExtractQueryParameters(u, &s3Options)
+		s3Options.setForcePathStyle(rawURL)
+		if err := s3Options.Apply(s3); err != nil {
 			return nil, errors.Trace(err)
+		}
+		if u.Scheme == "ks3" {
+			s3.Provider = ks3SDKProvider
 		}
 		return &backuppb.StorageBackend{Backend: &backuppb.StorageBackend_S3{S3: s3}}, nil
 
@@ -87,11 +106,12 @@ func ParseBackend(rawURL string, options *BackendOptions) (*backuppb.StorageBack
 		}
 		prefix := strings.Trim(u.Path, "/")
 		gcs := &backuppb.GCS{Bucket: u.Host, Prefix: prefix}
-		if options == nil {
-			options = &BackendOptions{}
+		var gcsOptions GCSBackendOptions
+		if options != nil {
+			gcsOptions = options.GCS
 		}
-		ExtractQueryParameters(u, &options.GCS)
-		if err := options.GCS.apply(gcs); err != nil {
+		ExtractQueryParameters(u, &gcsOptions)
+		if err := gcsOptions.apply(gcs); err != nil {
 			return nil, errors.Trace(err)
 		}
 		return &backuppb.StorageBackend{Backend: &backuppb.StorageBackend_Gcs{Gcs: gcs}}, nil
@@ -102,11 +122,12 @@ func ParseBackend(rawURL string, options *BackendOptions) (*backuppb.StorageBack
 		}
 		prefix := strings.Trim(u.Path, "/")
 		azblob := &backuppb.AzureBlobStorage{Bucket: u.Host, Prefix: prefix}
-		if options == nil {
-			options = &BackendOptions{}
+		var azblobOptions AzblobBackendOptions
+		if options != nil {
+			azblobOptions = options.Azblob
 		}
-		ExtractQueryParameters(u, &options.Azblob)
-		if err := options.Azblob.apply(azblob); err != nil {
+		ExtractQueryParameters(u, &azblobOptions)
+		if err := azblobOptions.apply(azblob); err != nil {
 			return nil, errors.Trace(err)
 		}
 		return &backuppb.StorageBackend{Backend: &backuppb.StorageBackend_AzureBlobStorage{AzureBlobStorage: azblob}}, nil
@@ -123,7 +144,7 @@ func ParseBackend(rawURL string, options *BackendOptions) (*backuppb.StorageBack
 // serialization.
 //
 // All of the URL's query parameters will be removed after calling this method.
-func ExtractQueryParameters(u *url.URL, options interface{}) {
+func ExtractQueryParameters(u *url.URL, options any) {
 	type field struct {
 		index int
 		kind  reflect.Kind
@@ -134,7 +155,7 @@ func ExtractQueryParameters(u *url.URL, options interface{}) {
 	ty := o.Type()
 	numFields := ty.NumField()
 	tagToField := make(map[string]field, numFields)
-	for i := 0; i < numFields; i++ {
+	for i := range numFields {
 		f := ty.Field(i)
 		tag := f.Tag.Get("json")
 		tagToField[tag] = field{index: i, kind: f.Type.Kind()}
@@ -191,4 +212,23 @@ func FormatBackendURL(backend *backuppb.StorageBackend) (u url.URL) {
 		u.Path = b.AzureBlobStorage.Prefix
 	}
 	return
+}
+
+// IsLocalPath returns true if the path is a local file path.
+func IsLocalPath(p string) (bool, error) {
+	u, err := url.Parse(p)
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+	return IsLocal(u), nil
+}
+
+// IsLocal returns true if the URL is a local file path.
+func IsLocal(u *url.URL) bool {
+	return u.Scheme == "local" || u.Scheme == "file" || u.Scheme == ""
+}
+
+// IsS3 returns true if the URL is an S3 URL.
+func IsS3(u *url.URL) bool {
+	return u.Scheme == "s3"
 }

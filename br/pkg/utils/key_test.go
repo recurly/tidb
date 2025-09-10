@@ -4,9 +4,14 @@ package utils
 
 import (
 	"encoding/hex"
+	"fmt"
+	"slices"
 	"testing"
+	"time"
 
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/oracle"
 )
 
 func TestParseKey(t *testing.T) {
@@ -110,4 +115,104 @@ func TestCompareEndKey(t *testing.T) {
 		res := CompareEndKey(tt.key1, tt.key2)
 		require.Equal(t, tt.ans, res)
 	}
+}
+
+func TestClampKeyRanges(t *testing.T) {
+	r := func(a, b string) kv.KeyRange {
+		return kv.KeyRange{
+			StartKey: []byte(a),
+			EndKey:   []byte(b),
+		}
+	}
+	type Case struct {
+		ranges  []kv.KeyRange
+		clampIn []kv.KeyRange
+		result  []kv.KeyRange
+	}
+
+	cases := []Case{
+		{
+			ranges:  []kv.KeyRange{r("0001", "0002"), r("0003", "0004"), r("0005", "0008")},
+			clampIn: []kv.KeyRange{r("0001", "0004"), r("0006", "0008")},
+			result:  []kv.KeyRange{r("0001", "0002"), r("0003", "0004"), r("0006", "0008")},
+		},
+		{
+			ranges:  []kv.KeyRange{r("0001", "0002"), r("00021", "0003"), r("0005", "0009")},
+			clampIn: []kv.KeyRange{r("0001", "0004"), r("0005", "0008")},
+			result:  []kv.KeyRange{r("0001", "0002"), r("00021", "0003"), r("0005", "0008")},
+		},
+		{
+			ranges:  []kv.KeyRange{r("0001", "0050"), r("0051", "0095"), r("0098", "0152")},
+			clampIn: []kv.KeyRange{r("0001", "0100"), r("0150", "0200")},
+			result:  []kv.KeyRange{r("0001", "0050"), r("0051", "0095"), r("0098", "0100"), r("0150", "0152")},
+		},
+		{
+			ranges:  []kv.KeyRange{r("0001", "0050"), r("0051", "0095"), r("0098", "0152")},
+			clampIn: []kv.KeyRange{r("0001", "0100"), r("0150", "")},
+			result:  []kv.KeyRange{r("0001", "0050"), r("0051", "0095"), r("0098", "0100"), r("0150", "0152")},
+		},
+		{
+			ranges:  []kv.KeyRange{r("0001", "0050"), r("0051", "0095"), r("0098", "")},
+			clampIn: []kv.KeyRange{r("0001", "0100"), r("0150", "0200")},
+			result:  []kv.KeyRange{r("0001", "0050"), r("0051", "0095"), r("0098", "0100"), r("0150", "0200")},
+		},
+		{
+			ranges:  []kv.KeyRange{r("", "0050")},
+			clampIn: []kv.KeyRange{r("", "")},
+			result:  []kv.KeyRange{r("", "0050")},
+		},
+	}
+	run := func(t *testing.T, c Case) {
+		require.ElementsMatch(
+			t,
+			IntersectAll(slices.Clone(c.ranges), slices.Clone(c.clampIn)),
+			c.result)
+		require.ElementsMatch(
+			t,
+			IntersectAll(c.clampIn, c.ranges),
+			c.result)
+	}
+
+	for i, c := range cases {
+		t.Run(fmt.Sprintf("#%d", i), func(t *testing.T) {
+			run(t, c)
+		})
+	}
+}
+
+func TestDateFormat(t *testing.T) {
+	cases := []struct {
+		ts     uint64
+		target string
+	}{
+		{
+			434604259287760897,
+			"2022-07-15 19:14:39.534 +0800",
+		},
+		{
+			434605479096221697,
+			"2022-07-15 20:32:12.734 +0800",
+		},
+		{
+			434605478903808000,
+			"2022-07-15 20:32:12 +0800",
+		},
+	}
+
+	timeZone, _ := time.LoadLocation("Asia/Shanghai")
+	for _, ca := range cases {
+		date := FormatDate(oracle.GetTimeFromTS(ca.ts).In(timeZone))
+		require.Equal(t, ca.target, date)
+	}
+}
+
+func TestPrefix(t *testing.T) {
+	require.True(t, IsMetaDBKey([]byte("mDBs")))
+	require.False(t, IsMetaDBKey([]byte("mDDL")))
+	require.True(t, IsMetaDDLJobHistoryKey([]byte("mDDLJobHistory")))
+	require.False(t, IsMetaDDLJobHistoryKey([]byte("mDDL")))
+	require.True(t, IsDBOrDDLJobHistoryKey([]byte("mDL")))
+	require.True(t, IsDBOrDDLJobHistoryKey([]byte("mDB:")))
+	require.True(t, IsDBOrDDLJobHistoryKey([]byte("mDDLHistory")))
+	require.False(t, IsDBOrDDLJobHistoryKey([]byte("DDL")))
 }

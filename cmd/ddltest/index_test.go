@@ -15,17 +15,19 @@
 package ddltest
 
 import (
+	goctx "context"
 	"fmt"
 	"math"
+	"os"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
-	"github.com/pingcap/tidb/store/gcworker"
-	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/pkg/store/gcworker"
+	"github.com/pingcap/tidb/pkg/table"
 	"github.com/stretchr/testify/require"
-	goctx "golang.org/x/net/context"
 )
 
 func getIndex(t table.Table, name string) table.Index {
@@ -48,6 +50,11 @@ func (s *ddlSuite) checkDropIndex(t *testing.T, tableName string) {
 
 // TestIndex operations on table test_index (c int, c1 bigint, c2 double, c3 varchar(256), primary key(c)).
 func TestIndex(t *testing.T) {
+	err := os.Setenv("tidb_manager_ttl", fmt.Sprintf("%d", *lease+5))
+	if err != nil {
+		log.Fatal("set tidb_manager_ttl failed")
+	}
+
 	s := createDDLSuite(t)
 	defer s.teardown(t)
 
@@ -56,10 +63,10 @@ func TestIndex(t *testing.T) {
 	base := *dataNum / workerNum
 	var wg sync.WaitGroup
 	wg.Add(workerNum)
-	for i := 0; i < workerNum; i++ {
+	for i := range workerNum {
 		go func(i int) {
 			defer wg.Done()
-			for j := 0; j < base; j++ {
+			for j := range base {
 				k := base*i + j
 				s.execInsert(
 					fmt.Sprintf("insert into test_index values (%d, %d, %f, '%s')",
@@ -87,6 +94,7 @@ func TestIndex(t *testing.T) {
 		done := s.runDDL(col.Query)
 
 		ticker := time.NewTicker(time.Duration(*lease) * time.Second / 2)
+		//nolint:all_revive,revive
 		defer ticker.Stop()
 	LOOP:
 		for {
@@ -119,10 +127,10 @@ func (s *ddlSuite) execIndexOperations(t *testing.T, workerNum, count int, inser
 	var wg sync.WaitGroup
 	// workerNum = 10
 	wg.Add(workerNum)
-	for i := 0; i < workerNum; i++ {
+	for range workerNum {
 		go func() {
 			defer wg.Done()
-			for j := 0; j < count; j++ {
+			for range count {
 				id := atomic.AddInt64(insertID, 1)
 				sql := fmt.Sprintf("insert into test_index values (%d, %d, %f, '%s')", id, randomInt(), randomFloat(), randomString(10))
 				s.execInsert(sql)

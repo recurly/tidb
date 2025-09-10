@@ -4,12 +4,19 @@ package storage
 
 import (
 	"context"
+	"crypto/rand"
+	"fmt"
 	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob"
+	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob/bloberror"
+	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/stretchr/testify/require"
 )
@@ -18,13 +25,38 @@ import (
 type sharedKeyAzuriteClientBuilder struct {
 }
 
-func (b *sharedKeyAzuriteClientBuilder) GetServiceClient() (azblob.ServiceClient, error) {
+// GetServiceURL implements ClientBuilder.
+func (b *sharedKeyAzuriteClientBuilder) GetServiceURL() string {
+	return "http://127.0.0.1:10000/devstoreaccount1"
+}
+
+func (b *sharedKeyAzuriteClientBuilder) GetServiceClient() (*azblob.Client, error) {
 	connStr := "DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;BlobEndpoint=http://127.0.0.1:10000/devstoreaccount1;"
-	return azblob.NewServiceClientFromConnectionString(connStr, nil)
+	return azblob.NewClientFromConnectionString(connStr, nil)
 }
 
 func (b *sharedKeyAzuriteClientBuilder) GetAccountName() string {
 	return "devstoreaccount1"
+}
+
+func createContainer(
+	ctx context.Context,
+	clientBuilder *sharedKeyAzuriteClientBuilder,
+	container string,
+) (bool, error) {
+	serviceClient, err := clientBuilder.GetServiceClient()
+	if err != nil {
+		return false, errors.Annotate(err, "Failed to create azure service client")
+	}
+	containerClient := serviceClient.ServiceClient().NewContainerClient(container)
+	_, err = containerClient.Create(ctx, nil)
+	if err != nil && !bloberror.HasCode(err, bloberror.ContainerAlreadyExists) {
+		if strings.Contains(err.Error(), "connect: connection refused") {
+			return true, nil
+		}
+		return false, errors.Annotate(err, "Failed to create container")
+	}
+	return false, nil
 }
 
 func TestAzblob(t *testing.T) {
@@ -33,14 +65,15 @@ func TestAzblob(t *testing.T) {
 		Bucket: "test",
 		Prefix: "a/b/",
 	}
-
-	azblobStorage, err := newAzureBlobStorageWithClientBuilder(ctx, options, &sharedKeyAzuriteClientBuilder{})
-	if err != nil {
-		if strings.Contains(err.Error(), "connect: connection refused") {
-			t.Log("azurite is not running, skip test")
-			return
-		}
+	builder := &sharedKeyAzuriteClientBuilder{}
+	skip, err := createContainer(ctx, builder, options.Bucket)
+	if skip || err != nil {
+		t.Skip("azurite is not running, skip test")
+		return
 	}
+	require.NoError(t, err)
+
+	azblobStorage, err := newAzureBlobStorageWithClientBuilder(ctx, options, builder)
 	require.NoError(t, err)
 
 	err = azblobStorage.WriteFile(ctx, "key", []byte("data"))
@@ -94,25 +127,36 @@ func TestAzblob(t *testing.T) {
 	require.Equal(t, "keykey1key2", list)
 	require.Equal(t, int64(42), totalSize)
 
-	efr, err := azblobStorage.Open(ctx, "key2")
+	efr, err := azblobStorage.Open(ctx, "key2", nil)
 	require.NoError(t, err)
+	size, err := efr.GetFileSize()
+	require.NoError(t, err)
+	require.EqualValues(t, 33, size)
+
+	realReader := efr.(*azblobObjectReader)
+	require.Nil(t, realReader.reader)
 
 	p := make([]byte, 10)
 	n, err := efr.Read(p)
 	require.NoError(t, err)
 	require.Equal(t, 10, n)
 	require.Equal(t, "data222233", string(p))
+	require.NotNil(t, realReader.reader)
+	oldInnerReader := realReader.reader
 
 	p = make([]byte, 40)
 	n, err = efr.Read(p)
 	require.NoError(t, err)
 	require.Equal(t, 23, n)
 	require.Equal(t, "46757222222222289722222", string(p[:23]))
+	require.Same(t, oldInnerReader, realReader.reader)
 
 	p = make([]byte, 5)
 	offs, err := efr.Seek(3, io.SeekStart)
 	require.NoError(t, err)
 	require.Equal(t, int64(3), offs)
+	// reader reopened
+	require.NotSame(t, oldInnerReader, realReader.reader)
 
 	n, err = efr.Read(p)
 	require.NoError(t, err)
@@ -203,8 +247,10 @@ func TestNewAzblobStorage(t *testing.T) {
 			Prefix:    "a/b",
 			SharedKey: "cGFzc3dk",
 		}
-		_, err := getAzureServiceClientBuilder(options, nil)
-		require.Error(t, err)
+		builder, err := getAzureServiceClientBuilder(options, nil)
+		require.NoError(t, err)
+		_, ok := builder.(*defaultClientBuilder)
+		require.True(t, ok, "it is %T", builder)
 	}
 
 	err = os.Setenv("AZURE_STORAGE_KEY", "cGFzc3dk")
@@ -297,5 +343,108 @@ func TestNewAzblobStorage(t *testing.T) {
 		require.Equal(t, "user", b.GetAccountName())
 		require.Equal(t, "http://127.0.0.1:1000", b.serviceURL)
 	}
+}
 
+type fakeClientBuilder struct {
+	Endpoint string
+}
+
+// GetServiceURL implements ClientBuilder.
+func (b *fakeClientBuilder) GetServiceURL() string {
+	return b.Endpoint
+}
+
+func (b *fakeClientBuilder) GetServiceClient() (*azblob.Client, error) {
+	connStr := fmt.Sprintf("DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;BlobEndpoint=%s/devstoreaccount1;", b.Endpoint)
+	return azblob.NewClientFromConnectionString(connStr, getDefaultClientOptions())
+}
+
+func (b *fakeClientBuilder) GetAccountName() string {
+	return "devstoreaccount1"
+}
+
+func TestDownloadRetry(t *testing.T) {
+	var count int32 = 0
+	var lock sync.Mutex
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Log(r.URL)
+		if strings.Contains(r.URL.String(), "restype=container") {
+			w.WriteHeader(200)
+			return
+		}
+		lock.Lock()
+		count += 1
+		lock.Unlock()
+		header := w.Header()
+		header.Add("Etag", "0x1")
+		header.Add("Content-Length", "5")
+		w.WriteHeader(200)
+		w.Write([]byte("1234567"))
+	}))
+
+	defer server.Close()
+	t.Log(server.URL)
+
+	options := &backuppb.AzureBlobStorage{
+		Bucket:       "test",
+		Prefix:       "a/b/",
+		StorageClass: "Hot",
+	}
+
+	ctx := context.Background()
+	builder := &fakeClientBuilder{Endpoint: server.URL}
+	s, err := newAzureBlobStorageWithClientBuilder(ctx, options, builder)
+	require.NoError(t, err)
+	_, err = s.ReadFile(ctx, "c")
+	require.Error(t, err)
+	require.Less(t, azblobRetryTimes, count)
+}
+
+type wr struct {
+	w   ExternalFileWriter
+	ctx context.Context
+}
+
+func (w wr) Write(bs []byte) (int, error) {
+	return w.w.Write(w.ctx, bs)
+}
+
+func TestCopyObject(t *testing.T) {
+	mkTestStrg := func(bucket, prefix string) *AzureBlobStorage {
+		ctx := context.Background()
+		options := &backuppb.AzureBlobStorage{
+			Bucket: bucket,
+			Prefix: prefix,
+		}
+		builder := &sharedKeyAzuriteClientBuilder{}
+		skip, err := createContainer(ctx, builder, options.Bucket)
+		if skip || err != nil {
+			t.Skipf("azurite is not running, skip test (err = %s)", err)
+			panic("just a note, should never reach here")
+		}
+		require.NoError(t, err)
+
+		azblobStorage, err := newAzureBlobStorageWithClientBuilder(ctx, options, builder)
+		require.NoError(t, err)
+		return azblobStorage
+	}
+
+	strg1 := mkTestStrg("alice", "somewhat/")
+	strg2 := mkTestStrg("bob", "complex/prefix/")
+
+	ctx := context.Background()
+
+	w, err := strg1.Create(ctx, "test.bin", &WriterOption{})
+	require.NoError(t, err)
+	_, err = io.CopyN(wr{w, ctx}, rand.Reader, 300*1024*1024)
+	require.NoError(t, err)
+	require.NoError(t, strg2.CopyFrom(ctx, strg1, CopySpec{
+		From: "test.bin",
+		To:   "somewhere/test.bin",
+	}))
+	srcReader, err := strg1.ReadFile(ctx, "test.bin")
+	require.NoError(t, err)
+	reader, err := strg2.ReadFile(ctx, "somewhere/test.bin")
+	require.NoError(t, err)
+	require.Equal(t, srcReader, reader)
 }

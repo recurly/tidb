@@ -1,0 +1,119 @@
+[
+  {
+    "Name": "TestExplainNonEvaledSubquery",
+    "Cases": [
+      {
+        "SQL": "explain format = 'plan_tree' select * from t1 where a = (select a from t2 limit 1)",
+        "Plan": [
+          "Selection root  eq(test.t1.a, ScalarQueryCol#9)",
+          "└─TableReader root  data:TableFullScan",
+          "  └─TableFullScan cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "ScalarSubQuery root  Output: ScalarQueryCol#9",
+          "└─MaxOneRow root  ",
+          "  └─Limit root  offset:0, count:1",
+          "    └─TableReader root  data:Limit",
+          "      └─Limit cop[tikv]  offset:0, count:1",
+          "        └─TableFullScan cop[tikv] table:t2 keep order:false, stats:pseudo"
+        ],
+        "Error": ""
+      },
+      {
+        "SQL": "explain analyze format = 'brief' select * from t1 where a = (select a from t2 limit 1)",
+        "Plan": [
+          "TableDual 0.00 0 root "
+        ],
+        "Error": ""
+      },
+      {
+        "SQL": "explain format = 'plan_tree' select * from t1 where exists(select 1 from t2 where a = 1)",
+        "Plan": [
+          "Selection root  ScalarQueryCol#10",
+          "└─TableReader root  data:TableFullScan",
+          "  └─TableFullScan cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "ScalarSubQuery root  Output: ScalarQueryCol#10",
+          "└─TableReader root  data:Selection",
+          "  └─Selection cop[tikv]  eq(test.t2.a, 1)",
+          "    └─TableFullScan cop[tikv] table:t2 keep order:false, stats:pseudo"
+        ],
+        "Error": ""
+      },
+      {
+        "SQL": "explain analyze format = 'brief' select * from t1 where exists(select 1 from t2 where a = 1)",
+        "Plan": [
+          "TableDual 0.00 0 root "
+        ],
+        "Error": ""
+      },
+      {
+        "SQL": "explain format = 'plan_tree' select * from t1 where not exists(select 1 from t2 where a = 1)",
+        "Plan": [
+          "Selection root  not(istrue_with_null(ScalarQueryCol#10))",
+          "└─TableReader root  data:TableFullScan",
+          "  └─TableFullScan cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "ScalarSubQuery root  Output: ScalarQueryCol#10",
+          "└─TableReader root  data:Selection",
+          "  └─Selection cop[tikv]  eq(test.t2.a, 1)",
+          "    └─TableFullScan cop[tikv] table:t2 keep order:false, stats:pseudo"
+        ],
+        "Error": ""
+      },
+      {
+        "SQL": "explain analyze format = 'brief' select * from t1 where not exists(select 1 from t2 where a = 1)",
+        "Plan": [
+          "TableReader 10000.00 0 root ",
+          "└─TableFullScan 10000.00 0 cop[tikv] table:t1"
+        ],
+        "Error": ""
+      },
+      {
+        "SQL": "explain format = 'plan_tree' select * from t1 where exists(select 1 from t2 where a = (select a from t3 limit 1) and b = a);",
+        "Plan": [
+          "Selection root  ScalarQueryCol#15",
+          "└─TableReader root  data:TableFullScan",
+          "  └─TableFullScan cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "ScalarSubQuery root  Output: ScalarQueryCol#13",
+          "└─MaxOneRow root  ",
+          "  └─Limit root  offset:0, count:1",
+          "    └─TableReader root  data:Limit",
+          "      └─Limit cop[tikv]  offset:0, count:1",
+          "        └─TableFullScan cop[tikv] table:t3 keep order:false, stats:pseudo",
+          "ScalarSubQuery root  Output: ScalarQueryCol#15",
+          "└─Selection root  eq(cast(test.t2.a, double BINARY), cast(ScalarQueryCol#13, double BINARY)), eq(cast(test.t2.b, double BINARY), cast(ScalarQueryCol#13, double BINARY))",
+          "  └─TableReader root  data:Selection",
+          "    └─Selection cop[tikv]  eq(test.t2.b, test.t2.a)",
+          "      └─TableFullScan cop[tikv] table:t2 keep order:false, stats:pseudo"
+        ],
+        "Error": ""
+      },
+      {
+        "SQL": "explain analyze format = 'brief' select * from t1 where exists(select 1 from t2 where a = (select a from t3 limit 1) and b = a);",
+        "Plan": [
+          "TableDual 0.00 0 root "
+        ],
+        "Error": ""
+      },
+      {
+        "SQL": "explain format = 'plan_tree' select * from t1 where (a, b) = (select a, b from t2 limit 1)",
+        "Plan": [
+          "Selection root  eq(test.t1.a, ScalarQueryCol#9), eq(test.t1.b, ScalarQueryCol#10)",
+          "└─TableReader root  data:TableFullScan",
+          "  └─TableFullScan cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "ScalarSubQuery root  Output: ScalarQueryCol#9,ScalarQueryCol#10",
+          "└─MaxOneRow root  ",
+          "  └─Limit root  offset:0, count:1",
+          "    └─TableReader root  data:Limit",
+          "      └─Limit cop[tikv]  offset:0, count:1",
+          "        └─TableFullScan cop[tikv] table:t2 keep order:false, stats:pseudo"
+        ],
+        "Error": ""
+      },
+      {
+        "SQL": "explain analyze format = 'brief' select * from t1 where (a, b) = (select a, b from t2 limit 1)",
+        "Plan": [
+          "TableDual 0.00 0 root "
+        ],
+        "Error": ""
+      }
+    ]
+  }
+]
