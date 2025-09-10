@@ -1049,22 +1049,54 @@ func createConnWithConsistency(ctx context.Context, db *sql.DB, repeatableRead b
 // and the number of writable fields.
 func buildSelectField(tctx *tcontext.Context, db *BaseConn, dbName, tableName string, completeInsert bool) (string, int, error) { // revive:disable-line:flag-parameter
 	query := fmt.Sprintf("SHOW COLUMNS FROM `%s`.`%s`", escapeString(dbName), escapeString(tableName))
-	results, err := db.QuerySQLWithColumns(tctx, []string{"FIELD", "EXTRA"}, query)
+	results, err := db.QuerySQLWithColumns(tctx, []string{"FIELD", "TYPE", "EXTRA"}, query)
 	if err != nil {
 		return "", 0, err
 	}
 	availableFields := make([]string, 0)
 	hasGenerateColumn := false
 	for _, oneRow := range results {
-		fieldName, extra := oneRow[0], oneRow[1]
+		fieldName, fieldType, extra := oneRow[0], oneRow[1], oneRow[2]
 		switch extra {
 		case "STORED GENERATED", "VIRTUAL GENERATED":
 			hasGenerateColumn = true
-			continue
 		}
-		availableFields = append(availableFields, wrapBackTicks(escapeString(fieldName)))
+		escapedField := wrapBackTicks(escapeString(fieldName))
+		fieldSql := escapedField
+		if fieldType == "date" ||
+			strings.HasPrefix(fieldType, "datetime") ||
+			strings.HasPrefix(fieldType, "timestamp") {
+			if strings.HasPrefix(fieldType, "datetime") || strings.HasPrefix(fieldType, "timestamp") {
+				fieldSql = fmt.Sprintf("if(%s = 0, null, date_format(%s, '%%Y-%%m-%%d %%H:%%i:%%S.%%f'))", escapedField, escapedField)
+			} else {
+				fieldSql = fmt.Sprintf("if(%s = 0, null, %s)", escapedField, escapedField)
+			}
+		}
+		/*
+		TODO: STILL NEEDED?
+
+		else if strings.HasPrefix(fieldType, "binary") ||
+			strings.HasPrefix(fieldType, "varbinary") ||
+			strings.HasPrefix(fieldType, "char") ||
+			strings.HasPrefix(fieldType, "varchar") ||
+			strings.HasPrefix(fieldType, "enum") ||
+			strings.HasPrefix(fieldType, "set") ||
+			fieldType == "json" ||
+			fieldType == "tinytext" ||
+			fieldType == "text" ||
+			fieldType == "mediumtext" ||
+			fieldType == "longtext" {
+			// remove NUL characters and convert to utf8mb4
+			transformSql := fmt.Sprintf("convert(replace(%s, '\\0', '') using 'utf8mb4')", escapedField)
+			// Remove leading BOM character
+			transformSql = fmt.Sprintf("if(substr(%s, 1, 1) = x'efbbbf', substr(%s, 2), %s)", transformSql, transformSql, transformSql)
+			fieldSql = fmt.Sprintf("replace(%s, '\\r', '{__CARRIAGE_RETURN__}')", transformSql)
+		}
+		*/
+		availableFields = append(availableFields, fieldSql)
 	}
 	if completeInsert || hasGenerateColumn {
+		// fmt.Println(strings.Join(availableFields, ","))
 		return strings.Join(availableFields, ","), len(availableFields), nil
 	}
 	return "*", len(availableFields), nil
